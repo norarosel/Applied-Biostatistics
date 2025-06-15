@@ -1,0 +1,314 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+# Run this only once
+library(GGally)
+library(ggplot2)
+library(scales)
+library(MASS)
+library(car)
+library(lmtest)
+```
+
+```{r}
+df <- data.frame(
+  smsa = c("Los Angeles-Long Bea", "Denver", "San Francisco-Oaklan", "Dallas-Fort Worth",
+           "Miami", "Atlanta", "Houston", "Seattle", "New York", "Memphis",
+           "New Orleans", "Cleveland", "Chicago", "Detroit", "Minneapolis-St Paul",
+           "Baltimore", "Philadelphia", "Boston"),
+  mortYld = c(6.17, 6.06, 6.04, 6.04, 6.02, 6.02, 5.99, 5.91, 5.89, 5.87, 5.85, 5.75,
+              5.73, 5.66, 5.66, 5.63, 5.57, 5.28),
+  X1 = c(78.1, 77, 75.7, 77.4, 77.4, 73.6, 76.3, 72.5, 77.3, 77.4, 72.4, 67, 68.9, 70.7,
+         69.8, 72.9, 68.7, 67.8),
+  X2 = c(3042, 1997, 3162, 1821, 1542, 1074, 1856, 3024, 216, 1350, 1544, 631, 972, 699,
+         1377, 399, 304, 0),
+  X3 = c(91.3, 84.1, 129.3, 41.2, 119.1, 32.3, 45.2, 109.7, 364.3, 111, 81, 202.7, 290.1,
+         223.4, 138.4, 125.4, 259.5, 428.2),
+  X4 = c(1738.1, 1110.4, 1738.1, 778.4, 1136.7, 582.9, 778.4, 1186, 2582.4, 613.6, 636.1,
+         1346, 1626.8, 1049.6, 1289.3, 836.3, 1315.3, 2081),
+  X5 = c(45.5, 51.8, 24, 45.7, 88.9, 39.9, 54.1, 31.1, 11.9, 27.4, 27.3, 24.6, 20.1,
+         24.7, 28.8, 22.9, 18.3, 7.5),
+  X6 = c(33.1, 21.9, 46, 51.3, 18.7, 26.6, 35.7, 17, 7.3, 11.3, 8.1, 10, 9.4, 31.7, 19.7,
+         8.6, 18.7, 2)
+)
+
+# Remove the categorical variable (smsa)
+```
+
+
+```{r}
+df_numeric <- df[, -1]
+
+# Wrap long labels to fit better in plot
+colnames(df_numeric) <- c(
+  "Mortgage \nYield",
+  "Avg Loan/\nMortgage Ratio\n",
+  "Dist. from\nBoston (mi)",
+  "Savings per\nNew Unit",
+  "Savings\nper Capita",
+  "Pop % Inc\n1950–60",
+  "1st Mortg. from\nInter-\nregional Banks (%)"
+)
+
+# Custom panel for upper triangle with colored background
+cor_colored_bg <- function(data, mapping, ...) {
+  x <- eval_data_col(data, mapping$x)
+  y <- eval_data_col(data, mapping$y)
+  corr <- cor(x, y, use = "complete.obs")
+
+  # Scale correlation to background color
+  fill <- col_numeric(c("blue", "white", "red"), domain = c(-1, 1))(corr)
+  
+  ggplot(data = data.frame(x = 1, y = 1, corr = corr), aes(x = x, y = y)) +
+    geom_tile(fill = fill, width = 2, height = 2) +
+    geom_text(aes(label = round(corr, 2)), color = "black", size = 5) +
+    theme_void()
+}
+
+# Final plot
+p <- ggpairs(
+  df_numeric,
+  diag = list(continuous = wrap("barDiag", fill = "skyblue")),
+  lower = list(continuous = wrap("smooth", method = "loess", se = FALSE, color = "deeppink", size = 0.7)),
+  upper = list(continuous = cor_colored_bg)
+) +
+  theme_bw(base_size = 10) +
+  theme(
+    axis.text.x = element_text(angle = 0),
+    axis.text.y = element_text(angle = 0)
+  )
+
+# Save the plot as a PDF with increased height
+ggsave("eda_stretched_plot.pdf", plot = p, width = 14, height = 16)  # Increased height for better visibility
+# Print the plot to the PDF
+print(p)
+
+# Close the PDF device to save the plot
+dev.off()
+
+```
+
+```{r}
+#Check VIF for standard linear model and remove parameters with VIF > 10 (high multicolinearaity)
+
+# Fit the full model
+full_model <- lm(mortYld ~ X1 + X2 + X3 + X4 + X5 + X6, data = df)
+
+# Calculate VIF for each predictor in the full model
+vif_values <- vif(full_model)
+
+# Print the VIF values
+print(vif_values)
+```
+```{r}
+#MANUALLY TEST A COUPLE MORE BECAUSE IT MAKES SENSE TO USE THOSE VARIABLES, THE LOG DIDN'T WORK BECAUSE OF THE 0 IN X2
+# Fit linear models with selected combinations of variables (X1, X2, X4, X5, X6) and their subset X1 + X2 + X4 + X5
+linear_model_full <- lm(mortYld ~ X1 + X2 + X4 + X5 + X6, data = df)
+linear_model_subset <- lm(mortYld ~ X1 + X2 + X4 + X5, data = df)
+
+# AIC and R-squared for both models
+linear_AIC_full <- AIC(linear_model_full)
+linear_AIC_subset <- AIC(linear_model_subset)
+
+linear_R2_full <- summary(linear_model_full)$r.squared
+linear_R2_subset <- summary(linear_model_subset)$r.squared
+
+# Generate QQ plot for residuals of both models
+par(mfrow = c(2, 2))  # Split into 4 plots
+# Linear Model Full
+qqnorm(residuals(linear_model_full), main = "QQ Plot: Linear Model Full")
+qqline(residuals(linear_model_full))
+# Linear Model Subset
+qqnorm(residuals(linear_model_subset), main = "QQ Plot: Linear Model Subset")
+qqline(residuals(linear_model_subset))
+
+# Generate Residuals vs Fitted plot for both models
+par(mfrow = c(2, 2))  # Split into 4 plots
+# Linear Model Full
+plot(fitted(linear_model_full), residuals(linear_model_full), main = "Residuals vs Fitted: Linear Model Full",
+     xlab = "Fitted values", ylab = "Residuals", pch = 16)
+abline(h = 0, col = "red")
+# Linear Model Subset
+plot(fitted(linear_model_subset), residuals(linear_model_subset), main = "Residuals vs Fitted: Linear Model Subset",
+     xlab = "Fitted values", ylab = "Residuals", pch = 16)
+abline(h = 0, col = "red")
+
+# Output AIC and R-squared for both models
+cat("Linear Model Full AIC:", linear_AIC_full, "\n")
+cat("Linear Model Full R²:", linear_R2_full, "\n")
+
+cat("Linear Model Subset AIC:", linear_AIC_subset, "\n")
+cat("Linear Model Subset R²:", linear_R2_subset, "\n")
+
+```
+
+
+```{r}
+#Fit a full model with REMAINING predictors
+#We remove X3 since VIF3 > 10
+model <- lm(mortYld ~ X1 + X2 + X4 + X5 + X6, data = df)
+
+# Fit a null model (intercept only)
+null_model <- lm(mortYld ~ 1, data = df)
+
+# Perform stepwise selection based on AIC (both directions)
+stepwise_model <- stepAIC(null_model, 
+                          scope = list(lower = null_model, upper = model),
+                          direction = "both",
+                          trace = TRUE)
+
+# Final model summary
+summary(stepwise_model)
+
+# Output Adjusted R-squared
+adj_r2 <- summary(stepwise_model)$adj.r.squared
+cat("Adjusted R-squared of final stepwise model:", adj_r2, "\n")
+
+```
+
+```{r}
+# Create the Residuals vs Fitted plot
+ggplot(data.frame(fitted = stepwise_model$fitted.values, residuals = stepwise_model$residuals), aes(x = fitted, y = residuals)) +
+  geom_point(color = "blue") +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Fitted Values", y = "Residuals", title = "Residuals vs Fitted") +
+  theme_minimal()
+
+# Save the plot as a PDF
+pdf("residuals_vs_fitted.pdf", width = 10, height = 8)  # Specify PDF dimensions
+
+# Close the PDF device
+dev.off()
+
+```
+
+```{r}
+#Check assumption that errors are normally distributed
+
+# Q-Q plot to check for normality
+qqnorm(stepwise_model$residuals, main = "Q-Q Plot of Residuals")
+qqline(stepwise_model$residuals, col = "red", lwd = 2)  # Add a reference line
+
+# Save the plot as a PDF
+pdf("qq_plot_residuals.pdf", width = 8, height = 6)  # Adjust dimensions as needed
+qqnorm(stepwise_model$residuals, main = "Q-Q Plot of Residuals")
+qqline(stepwise_model$residuals, col = "red", lwd = 2)  # Add a reference line
+dev.off()  # Close the graphic device and save the plot
+
+```
+
+```{r}
+# Fit log-transformed response model
+log_model <- lm(log(mortYld) ~ X1 + X2 + X4 + X5 + X6, data = df)
+null_log_model <- lm(log(mortYld) ~ 1, data = df)
+
+# Stepwise for log-transformed response
+stepwise_log <- stepAIC(null_log_model,
+                        scope = list(lower = null_log_model, upper = log_model),
+                        direction = "both",
+                        trace = TRUE)
+
+# Summary and adjusted R-squared
+summary(stepwise_log)
+adj_r2_log <- summary(stepwise_log)$adj.r.squared
+cat("Adjusted R-squared (log model):", adj_r2_log, "\n")
+
+```
+
+```{r}
+aic_regular <- AIC(stepwise_model)
+aic_log <- AIC(stepwise_log)
+
+cat("AIC (regular):", aic_regular, "\n")
+cat("AIC (log):", aic_log, "\n")
+
+if (aic_log < aic_regular) {
+  cat("The log-transformed model is preferred based on AIC.\n")
+} else {
+  cat("The untransformed model is preferred based on AIC.\n")
+}
+```
+```{r}
+# Residuals vs. Fitted plot for log-transformed model
+plot_data <- data.frame(fitted = stepwise_log$fitted.values, residuals = stepwise_log$residuals)
+
+# Create the plot
+residuals_plot <- ggplot(plot_data, aes(x = fitted, y = residuals)) +
+  geom_point(color = "blue") +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed", size = 1) +
+  labs(x = "Fitted Values (Log Model)", y = "Residuals",
+       title = "Residuals vs Fitted (Log-Transformed Model)") +
+  theme_minimal()
+
+# Save the plot to a PDF
+pdf("residuals_vs_fitted_log.pdf", width = 10, height = 8)
+print(residuals_plot)  # Use print to explicitly render the plot in the PDF
+dev.off()  # Close the PDF device to save the file
+
+
+```
+
+```{r}
+# Q-Q plot for log-transformed model
+qqnorm(stepwise_log$residuals, main = "Q-Q Plot of Residuals (Log Model)")
+qqline(stepwise_log$residuals, col = "red", lwd = 2)
+
+# Save the Q-Q plot
+pdf("qq_plot_residuals_log.pdf", width = 8, height = 6)
+qqnorm(stepwise_log$residuals, main = "Q-Q Plot of Residuals (Log Model)")
+qqline(stepwise_log$residuals, col = "red", lwd = 2)
+dev.off()
+
+```
+
+
+
+```{r}
+# Load any additional required library
+library(lmtest)
+
+# 1. Residual Standard Error (RSE)
+rse_regular <- sigma(stepwise_model)
+rse_log <- sigma(stepwise_log)
+
+# 2. Shapiro-Wilk test for normality: to check if residuals are normally distributed — p > 0.05 suggests they are.
+shapiro_regular <- shapiro.test(residuals(stepwise_model))
+shapiro_log <- shapiro.test(residuals(stepwise_log))
+
+# 3. Breusch-Pagan test for heteroscedasticity: detects heteroscedasticity (non-constant variance in residuals) — p > 0.05 suggests variance is constant
+bp_regular <- bptest(stepwise_model)
+bp_log <- bptest(stepwise_log)
+
+# Print results
+
+cat("Residual Standard Error (RSE) (lower is better):\n")
+cat("  Regular model:", rse_regular, "\n")
+cat("  Log model    :", rse_log, "\n")
+
+cat("Shapiro-Wilk Test for Normality (higher is better):\n")
+cat("  Regular model p-value:", shapiro_regular$p.value, "\n")
+cat("  Log model p-value    :", shapiro_log$p.value, "\n")
+
+cat("Breusch-Pagan Test for Heteroscedasticity (higher is better):\n")
+cat("  Regular model p-value:", bp_regular$p.value, "\n")
+cat("  Log model p-value    :", bp_log$p.value, "\n")
+
+# Optional: suggest model
+if (rse_log < rse_regular && shapiro_log$p.value > 0.05 && bp_log$p.value > 0.05) {
+  cat("The log-transformed model is better based on all three diagnostics.\n")
+} else if (rse_log < rse_regular) {
+  cat("The log-transformed model has lower RSE, but check residual assumptions.\n")
+} else {
+  cat("The non-log model may be preferable based on diagnostics.\n")
+}
+
+```
+
+

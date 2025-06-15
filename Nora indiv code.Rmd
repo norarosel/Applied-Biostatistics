@@ -1,0 +1,477 @@
+---
+title: "Nora indiv code"
+output: html_document
+date: "2025-05-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Libraries
+
+```{r}
+library(tidyverse)
+library(psych)
+library(gtsummary)
+library(broom)
+library(epiDisplay)
+library(patchwork)
+library(gridExtra)
+library(ggplot2)
+library(vcd)
+library(GGally)
+library(ggplot2)
+library(corrplot)
+library(dplyr)
+library(car)           
+library(MASS)
+library(ResourceSelection)
+library(pROC)
+library(reshape2)
+library(ggpubr)
+library(broom)
+```
+
+## Load data
+
+```{r}
+#load data
+#not preprocessed
+glioma_data = read.csv("./glioma+grading+clinical+and+mutation+features+dataset/TCGA_GBM_LGG_Mutations_all.csv")
+#preprocessed
+grade_data = read.csv("./glioma+grading+clinical+and+mutation+features+dataset/TCGA_InfoWithGrade.csv")
+```
+
+```{r}
+
+grade_data$Grade <- as.factor(grade_data$Grade)
+
+#Univariate numerical
+# Summary statistics for continuous variable, Age_at_diagnosis
+age_summary <- summary(grade_data$Age_at_diagnosis)
+
+# Calculate the standard deviation
+age_sd <- sd(grade_data$Age_at_diagnosis)
+
+# Round each value to two significant digits
+age_summary_rounded <- round(age_summary, 2)
+age_sd_rounded <- round(age_sd, 2)
+
+# Combine all results into a single output
+age_summary_rounded <- c(age_summary_rounded, SD = age_sd_rounded)
+
+# Print the results
+print(age_summary_rounded)
+
+#Frequencies of clinical categorical variables (grade, gender, race; by category, absolute and relative frequency)
+
+# Frequency for the 'Grade' variable (absolute and relative)
+grade_freq <- table(grade_data$Grade)
+print("Frequency for Grade:")
+print(grade_freq)
+print("Relative Frequency for Grade (%):")
+print(round(grade_freq / sum(grade_freq) * 100, 2))
+
+# Frequency for the 'Gender' variable (absolute and relative)
+gender_freq <- table(grade_data$Gender)
+print("Frequency for Gender:")
+print(gender_freq)
+print("Relative Frequency for Gender (%):")
+print(round(gender_freq / sum(gender_freq) * 100, 2))
+
+# Frequency for the 'Race' variable (absolute and relative)
+race_freq <- table(grade_data$Race)
+print("Frequency for Race:")
+print(race_freq)
+print("Relative Frequency for Race (%):")
+print(round(race_freq / sum(race_freq) * 100, 2))
+
+# List of mutated genes (20 gene names as per your dataset)
+genes <- c("IDH1", "TP53", "ATRX", "PTEN", "EGFR", "CIC", "MUC16", "PIK3CA", 
+           "NF1", "PIK3R1", "FUBP1", "RB1", "NOTCH1", "BCOR", "CSMD3", "SMARCA4", 
+           "GRIN2A", "IDH2", "FAT4", "PDGFRA")
+
+# Loop through each gene and generate frequency for each (absolute and relative)
+for (gene in genes) {
+  gene_column <- grade_data[[gene]]
+  gene_freq <- table(gene_column)
+  print(paste("Frequency for", gene, ":"))
+  print(gene_freq)
+  print(paste("Relative Frequency for", gene, "(%):"))
+  print(round(gene_freq / sum(gene_freq) * 100, 2))
+}
+```
+```{r}
+# Set up first PNG file with 5 univariate plots
+png("univariate_graphical_summary.png", width = 1600, height = 1200, res = 150)
+
+par(mfrow = c(3, 2), mar = c(4, 4, 3, 1))  # Layout for 5 plots
+
+# 1. Grade: Bar Plot (LGG vs GBM)
+barplot(table(grade_data$Grade),
+        col = c("skyblue", "salmon"),
+        names.arg = c("LGG", "GBM"),
+        main = "Grade Distribution")
+
+# 2. Age: Histogram + Density Overlay
+hist(grade_data$Age_at_diagnosis,
+     breaks = 30,
+     col = "lightblue",
+     main = "Age at Diagnosis",
+     xlab = "Age",
+     freq = FALSE)
+lines(density(grade_data$Age_at_diagnosis, na.rm = TRUE), col = "darkblue", lwd = 2)
+
+# 3. Gender: Bar Plot
+barplot(table(grade_data$Gender),
+        col = "lightgreen",
+        names.arg = c("Male", "Female"),
+        main = "Gender Distribution")
+
+# 4. Race: Bar Plot
+barplot(table(grade_data$Race),
+        col = "lightcoral",
+        names.arg = c("White", "Black", "Asian", "Native"),
+        main = "Race Distribution")
+
+# 5. Gene Mutation Frequencies
+mutation_cols <- names(grade_data)[!(names(grade_data) %in% c("Grade", "Gender", "Age_at_diagnosis", "Race"))]
+mutation_freq <- colSums(grade_data[mutation_cols])
+barplot(mutation_freq,
+        las = 2,
+        col = "purple",
+        main = "Gene Mutation Frequencies",
+        ylab = "Number of Mutated Cases",
+        cex.names = 0.6)
+
+# Close first PNG device
+dev.off()
+
+# Set up second PNG file with 4 bivariate plots
+png("bivariate_graphical_summary_4_plots.png", width = 1600, height = 1200, res = 150)
+
+par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))  # Layout for 4 plots
+
+# 1. Gender x Grade: Stacked Bar Plot with clear labels
+gender_grade <- table(Gender = grade_data$Gender, Grade = grade_data$Grade)
+colnames(gender_grade) <- c("LGG", "GBM")
+rownames(gender_grade) <- c("Male", "Female")
+
+barplot(gender_grade,
+        col = c("lightblue", "pink"),
+        beside = FALSE,
+        legend = TRUE,
+        args.legend = list(title = "Gender", x = "topright"),
+        main = "Gender by Grade",
+        names.arg = colnames(gender_grade))
+
+# 2. Gene Mutations by Grade: Grouped Bar Plot
+genes <- mutation_cols  # reuse from earlier
+mutation_by_grade <- sapply(genes, function(gene) {
+  tapply(grade_data[[gene]], grade_data$Grade, function(x) sum(x == 1, na.rm = TRUE))
+})
+
+mutation_by_grade <- t(mutation_by_grade)
+colnames(mutation_by_grade) <- c("LGG", "GBM")
+barplot(t(mutation_by_grade),
+        beside = TRUE,
+        col = c("skyblue", "salmon"),
+        las = 2,
+        legend = TRUE,
+        args.legend = list(title = "Grade", x = "topright"),
+        main = "Gene Mutations by Grade",
+        ylab = "Number of Mutated Cases",
+        cex.names = 0.6)
+
+# 3. Age x Grade: Histogram (with count on y-axis, capped at 50)
+hist(grade_data$Age_at_diagnosis[grade_data$Grade == 0],
+     breaks = 30,
+     col = rgb(135/255, 206/255, 235/255, 0.6),  # skyblue with transparency
+     main = "Age Distribution by Grade",
+     xlab = "Age at Diagnosis",
+     xlim = range(grade_data$Age_at_diagnosis, na.rm = TRUE),
+     freq = TRUE,
+     ylim = c(0, 50))  # Cap the y-axis
+
+hist(grade_data$Age_at_diagnosis[grade_data$Grade == 1],
+     breaks = 30,
+     col = rgb(250/255, 128/255, 114/255, 0.6),  # salmon with transparency
+     add = TRUE)
+
+legend("topright", c("LGG", "GBM"), 
+       fill = c(rgb(135/255, 206/255, 235/255, 0.6), 
+                rgb(250/255, 128/255, 114/255, 0.6)))
+
+
+
+# 4. Race x Grade: Bar Plot (for each of the 4 races)
+# Ensure the race is labeled explicitly (no 0-3, but the actual race names)
+race_labels <- c("White", "Black", "Asian", "Native")
+race_grade <- table(Race = factor(grade_data$Race, labels = race_labels), Grade = grade_data$Grade)
+
+barplot(race_grade,
+        beside = TRUE,
+        col = c("lightcoral", "lightgreen", "lightblue", "lightpink"),
+        legend = TRUE,
+        args.legend = list(title = "Grade", x = "topright"),
+        main = "Race by Grade",
+        ylab = "Number of Cases",
+        names.arg = c("LGG", "GBM"))
+
+# Close second PNG device
+dev.off()
+```
+
+```{r}
+# Correlation
+# Define gene sets
+all_genes <- names(grade_data)[!(names(grade_data) %in% c("Grade", "Gender", "Age_at_diagnosis", "Race"))]
+subset_genes <- c("IDH1", "TP53", "ATRX", "PTEN", "EGFR")
+
+# Cramér's V function
+cramers_v <- function(x, y) {
+  tbl <- table(x, y)
+  chisq <- suppressWarnings(chisq.test(tbl))
+  sqrt(chisq$statistic / sum(tbl) / (min(dim(tbl)) - 1))
+}
+
+# Function to compute full correlation matrix
+build_correlation_matrix <- function(genes, filename, title_text) {
+  # Define variables
+  categorical_columns <- c("Grade", "Gender", "Race", genes)
+  
+  # Convert to factors
+  grade_data[categorical_columns] <- lapply(grade_data[categorical_columns], as.factor)
+  
+  # Age correlation with binary categorical variables (point-biserial. Race = White (coded as 1)
+  age_corr <- sapply(categorical_columns, function(col) {
+    if (col == "Race") {
+      is_white <- ifelse(grade_data[[col]] == 0, 1, 0)
+      cor(grade_data$Age_at_diagnosis, is_white, method = "pearson")
+    } else if (is.factor(grade_data[[col]]) && length(unique(grade_data[[col]])) == 2) {
+      cor(grade_data$Age_at_diagnosis, as.numeric(grade_data[[col]]) - 1, method = "pearson")
+    } else {
+      NA
+    }
+  })
+  
+  # Cramér’s V for categorical vs categorical
+  all_correlations <- matrix(NA, nrow = length(categorical_columns), ncol = length(categorical_columns))
+  for (i in 1:length(categorical_columns)) {
+    for (j in i:length(categorical_columns)) {
+      x <- grade_data[[categorical_columns[i]]]
+      y <- grade_data[[categorical_columns[j]]]
+      if (i == j) {
+        all_correlations[i, j] <- 1
+      } else {
+        all_correlations[i, j] <- cramers_v(x, y)
+        all_correlations[j, i] <- all_correlations[i, j]
+      }
+    }
+  }
+  
+  # Final matrix including Age correlations
+  full_correlations_matrix <- matrix(NA, nrow = length(categorical_columns) + 1,
+                                     ncol = length(categorical_columns) + 1)
+  full_correlations_matrix[1, 2:(length(categorical_columns) + 1)] <- age_corr
+  full_correlations_matrix[2:(length(categorical_columns) + 1), 1] <- age_corr
+  full_correlations_matrix[2:(length(categorical_columns) + 1), 2:(length(categorical_columns) + 1)] <- all_correlations
+  
+  rownames(full_correlations_matrix) <- c("Age", categorical_columns)
+  colnames(full_correlations_matrix) <- c("Age", categorical_columns)
+  
+  # Plot
+  png(filename, width = 1600, height = 1200, res = 150)
+  corrplot(full_correlations_matrix,
+           method = "color",
+           col = colorRampPalette(c("blue", "white", "red"))(200),
+           type = "full",
+           tl.col = "black",
+           addCoef.col = "black",
+           number.cex = 0.7,
+           diag = FALSE,
+           title = title_text,
+           mar = c(5, 4, 4, 2))
+  dev.off()
+}
+
+# 1. Full gene set
+build_correlation_matrix(all_genes,
+                         filename = "correlation_matrix_all_genes.png",
+                         title_text = "Correlation Matrix: All Genes")
+
+# 2. Subset of genes
+build_correlation_matrix(subset_genes,
+                         filename = "correlation_matrix_subset_genes.png",
+                         title_text = "Correlation Matrix: Subset of Genes")
+
+
+```
+```{r}
+# Building the model, first with single variables
+# Fit all models
+model_age <- glm(Grade ~ Age_at_diagnosis, data = grade_data, family = binomial)
+model_gender <- glm(Grade ~ Gender, data = grade_data, family = binomial)
+model_race <- glm(Grade ~ Race, data = grade_data, family = binomial)
+model_IDH1 <- glm(Grade ~ IDH1, data = grade_data, family = binomial)
+
+# Full model
+full_formula <- as.formula(
+  paste("Grade ~ Age_at_diagnosis + Gender + Race +", paste(genes, collapse = " + "))
+)
+full_model <- glm(full_formula, data = grade_data, family = binomial)
+
+# List of models
+models <- list(
+  "Age only" = model_age,
+  "Gender only" = model_gender,
+  "Race only" = model_race,
+  "IDH1 only" = model_IDH1,
+  "Full model" = full_model
+)
+
+# Summary table with predictors, p-values, and AIC
+summary_table <- lapply(names(models), function(name) {
+  model <- models[[name]]
+  tidy_m <- tidy(model)
+  glance_m <- glance(model)
+  
+  data.frame(
+    Model = name,
+    Predictors = paste(tidy_m$term[-1], collapse = " + "),  # exclude intercept
+    P_values = paste(round(tidy_m$p.value[-1], 4), collapse = ", "),  # exclude intercept
+    AIC = round(glance_m$AIC, 2)
+  )
+}) %>% bind_rows()
+
+print(summary_table)
+
+# Likelihood Ratio Tests (LRT) comparing univariate models to full model
+lrt_results <- lapply(names(models)[1:4], function(name) {
+  model <- models[[name]]
+  test <- anova(model, full_model, test = "Chisq")
+  
+  data.frame(
+    Compared_Model = name,
+    Residual_Df = test$Df[2],
+    Deviance_Diff = round(test$Deviance[2], 4),
+    LRT_p_value = round(test$`Pr(>Chi)`[2], 4)
+  )
+}) %>% bind_rows()
+
+print(lrt_results)
+
+```
+```{r}
+# Building the model with stepAIC
+
+# Use trace = TRUE in stepAIC to manually capture top models
+stepwise_model <- stepAIC(full_model, direction = "both", trace = TRUE)
+
+# Get the final stepwise model
+final_model <- stepwise_model
+
+# Extract terms from final model
+final_terms <- attr(terms(final_model), "term.labels")
+
+# Create top 5 manual models based on output from stepAIC trace (edit as needed based on what you see in the stepwise output)
+model_1 <- glm(as.formula(paste("Grade ~", paste(final_terms, collapse = " + "))), 
+               data = grade_data, family = binomial)
+
+# For now, create a single-row table with the final model
+tidy_fm <- tidy(final_model)
+glance_fm <- glance(final_model)
+
+table2 <- data.frame(
+  Model = "StepAIC Final Model",
+  Predictors = paste(tidy_fm$term[-1], collapse = " + "),
+  P_values = paste(round(tidy_fm$p.value[-1], 4), collapse = ", "),
+  AIC = round(glance_fm$AIC, 2)
+)
+
+print(table2)
+
+# Get the coefficients from the final model
+coefficients_final <- coefficients(final_model)
+
+# Print out the logistic regression equation
+equation <- paste("logit(π(x)) = ", round(coefficients_final[1], 2))  # Intercept term
+for (i in 2:length(coefficients_final)) {
+  equation <- paste(equation, ifelse(coefficients_final[i] > 0, " + ", " "), 
+                    round(coefficients_final[i], 2), "*", names(coefficients_final)[i], sep = "")
+}
+
+cat("The final model equation is:\n", equation, "\n")
+```
+
+```{r}
+# 2. Linear relationship between logit and the linear predictor
+# Get logit (linear predictor) values from the final model
+logit_values <- predict(final_model, type = "link")  # Linear predictor
+
+# Plot logit vs Age_at_diagnosis (or replace with another continuous predictor)
+ggplot(grade_data, aes(x = Age_at_diagnosis, y = logit_values)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(title = "Logit vs Age_at_diagnosis", y = "Logit(π(x))", x = "Age_at_diagnosis")
+
+# 3. No Multicollinearity (Variance Inflation Factor)
+library(car)
+vif(final_model)  # Apply VIF to the final model
+
+# 4. No Outliers (Cook's Distance)
+cooks_dist <- cooks.distance(final_model)
+
+# Plot Cook’s distance for final model
+plot(cooks_dist, type = "h", main = "Cook's Distance", ylab = "Cook's Distance", xlab = "Observation Index")
+abline(h = 1, col = "red")
+
+# Identify points with Cook's Distance > 1
+influential_points <- which(cooks_dist > 1)
+influential_points
+
+# 5. Odds ratios and CI
+exp_coef <- exp(coef(final_model))
+conf_int <- exp(confint(final_model))  # 95% CI
+
+# Combine into one data frame
+odds_table <- data.frame(
+  Variable = names(exp_coef),
+  Odds_Ratio = round(exp_coef, 3),
+  CI_lower = round(conf_int[,1], 3),
+  CI_upper = round(conf_int[,2], 3),
+  p_value = round(coef(summary(final_model))[,4], 4)
+)
+
+print("Odds Ratios and Confidence Intervals:")
+print(odds_table)
+
+# 6. Hosmer-Lemeshow test
+library(ResourceSelection)
+hoslem <- hoslem.test(as.numeric(grade_data$Grade) - 1, fitted(final_model), g = 10)
+print(hoslem)
+
+library(pROC)
+
+# 7. ROC and AUC
+pred_probs <- predict(final_model, type = "response")
+roc_obj <- roc(grade_data$Grade, pred_probs)
+plot(roc_obj, col = "blue", main = "ROC Curve")
+auc_val <- auc(roc_obj)
+cat("AUC:", auc_val, "\n")
+
+library(pscl)
+
+# 8. Pseudo R-squared
+pseudo_r2 <- pR2(final_model)
+print("Pseudo R-squared values:")
+print(pseudo_r2)
+
+library(gtsummary)
+
+# Summary table with ORs
+final_model %>%
+  tbl_regression(exp = TRUE) %>%
+  as_kable_extra()
+```
